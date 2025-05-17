@@ -1,0 +1,261 @@
+Create github repo <https://github.com/bombk/jenkins_k8s_docker.git>
+create .gitignore
+python -m venv venv
+venv/Scripts/ativate 
+pip install flask pytest flake8
+create app.py
+create test.py
+pytest test.py
+
+flask-hell-world-devops-project
+
+##docker / docker hub
+create Dockerfile
+docker build -t flask-hello-world
+docker run -d -p 5000:5000 flask-hello-world
+
+docker login
+login with your username and password
+
+docker tag flask-hello-world bombk98/flask-hello-world
+docker push bombk98/flask-hello-world
+
+##Install jenkins file
+curl -fsSL https://pkg.jenkins.io/debian-stable/jenkins.io.key | sudo tee /usr/share/keyrings/jenkins-keyring.asc > /dev/null
+echo deb [signed-by=/usr/share/keyrings-keyring.asc] https://pkg.jenkins.io/debian-stable binary/ | sudo tee /etc/apt/source.list.d/jenkins.list > /dev/null
+
+sudo apt update
+sudo apt install openjdk-11-jre -y
+sudo apt install jenkins -y
+
+sudo apt install docker.io -y
+sudo usermod -aG docker jenkins
+sudo service jenkins restart
+
+now browsed jenkins <hostip:8080>
+create new Item
+create pipeline flask-hello-world
+pipeline script/ Jenkinsfile
+pipeline {
+	agent any
+	environment {
+		DOCKER_HUB_REPO = "bombk98/flask-hello-world"
+		CONTAINER_NAME = "flask-hello-world"	
+	}
+	stages {
+		stage('Checkout'){
+			steps {
+				checkout([$class: 'GitSCM', 
+				branches: [[name:'*/main']],extensions: [], userRemoteConfigs: [[url:'https://github.com/bombk/jenkins_k8s_docker']]
+					])	
+					}
+				}
+		stage ('Build') {
+			 steps{
+				echo 'Building...'
+				sh 'docker image build -t $DOCKER_HUB_REPO:latest .'
+			}	
+			}
+		stage ('Test') {
+			 steps{
+				echo 'Testing...'
+				sh 'docker stop $CONTAINER_NAME || true'
+				sh 'docker rm $CONTAINER_NAME || true'
+				sh 'docker run --name $CONTAINER_NAME $DOCKER_HUB_REPO /bin/bash -c "pytest test.py && flake8"'
+			}	
+			}
+
+		stage ('Deploy') {
+			 steps{
+				echo 'Deploying...'
+				sh 'docker stop $CONTAINER_NAME || true'
+				sh 'docker rm $CONTAINER_NAME || true'
+				sh 'docker run -d -p 5000:5000 --name $CONTAINER_NAME $DOCKER_HUB_REP'
+				}	
+			}
+	}
+}
+
+## Intall kubernetes
+#https://minikube.sigs.k8s.io/docs/start/
+#Install docker for managing containers
+sudo apt install docker.io -y
+
+#Install minikube
+curl -LO https://storage.googleapis.com/minikube/releases/latest/minikube-linux-amd64
+sudo install minikube-linux-amd64 /usr/local/bin/minikube
+
+##Add the current USER to docker group
+sudo usermod -aG docker $USER && newgrp docker
+
+#Start minikube cluster
+minikube start
+
+##Add an alias for kubectl command
+alias kubectl="minikube kubectl --"
+
+
+Create a deployment.yaml
+
+apiVersion: apps/v1
+kind: Deployement
+metadata: 
+  name: flask-hello-deployment # name of the deployment
+
+spec:
+  template: # pod defintion
+   metadata:
+    name: flask-hello # name of the pod
+    labels:
+      app: flask-hello
+      tier: frontend
+   spec:
+    containers:
+      - name: flask-hello
+        image: bombk98/flask-hello-world:latest
+  replicas: 3
+  selector: # Mandatory, Select the pods which need to be in the prelicaset
+   matchLabels:
+    app: flask-hello
+    tier: frontend
+
+##Now run command
+$kubectl apply -f deployment.yml
+deployment.apps/flask-hello-deployment created
+$kubectl get deployments flask-hello-deployment
+
+##Now create service.yml file
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: flask-hello-service-nodeport # name of the service
+
+spec:
+  type: NodePort # Used for accessing a port externally
+  ports:
+   - port: 5000 # Service port
+     targetPort: 5000 # Pod port, default: same as port
+     nodePort: 30008 # Node port which can be used externally,
+  default: auto-assign any free port
+   selector: # which pods to expose externally ?
+    app: flask-hello
+    tier: frontend
+
+##Test the service manually by running below commands
+$kubectl apply -f service.yml
+service/flask-hello-service-nodeport created
+$kubectl get service flask-hello-service-nodeport
+
+Now run app in browser
+http://ip:54598
+
+Now deploy in kubernetes from jenkins
+pipeline {
+    agent any
+    
+    environment {
+        DOCKER_HUB_REPO = "shivammitra/flask-hello-world"
+        CONTAINER_NAME = "flask-hello-world"
+        DOCKERHUB_CREDENTIALS=credentials('dockerhub-credentials')
+    }
+    
+    stages {
+        /* We do not need a stage for checkout here since it is done by default when using "Pipeline script from SCM" option. */
+        
+        stage('Build') {
+            steps {
+                echo 'Building..'
+                sh 'docker image build -t $DOCKER_HUB_REPO:latest .'
+            }
+        }
+        stage('Test') {
+            steps {
+                echo 'Testing..'
+                sh 'docker stop $CONTAINER_NAME || true'
+                sh 'docker rm $CONTAINER_NAME || true'
+                sh 'docker run --name $CONTAINER_NAME $DOCKER_HUB_REPO /bin/bash -c "pytest test.py && flake8"'
+            }
+        }
+        stage('Push') {
+            steps {
+                echo 'Pushing image..'
+                sh 'echo $DOCKERHUB_CREDENTIALS_PSW | docker login -u $DOCKERHUB_CREDENTIALS_USR --password-stdin'
+                sh 'docker push $DOCKER_HUB_REPO:latest'
+            }
+        }
+        stage('Deploy') {
+            steps {
+                echo 'Deploying....'
+                sh 'minikube kubectl -- apply -f deployment.yaml'
+                sh 'minikube kubectl -- apply -f service.yaml'
+            }
+        }
+    }
+}
+
+##If the kubernetes host is differenct from jenkins host?
+
+In case you have set up kebernetes on a different virtual machine,we will need to ssh to this from jenkins machine,
+Copy the deployemnt and service files and then run kubernetes commands.
+
+#Create a ssh key pair on jenkins servers
+$cd ~/.ssh # we are on jenkins server
+$ssh-keygen -t rsa # select the default options
+$cat id_rsa.pub # copy the public key
+
+###Add the public key we crated to authorized_keys on kubernets server.
+
+$cd ~/.ssh # we are on kubernetes server
+$ echo "<public key>" >> authorized_keys
+
+Now modify 'Deploy' stage in Jenkinsfile. Replace and with the username and ip address of kubernets host respectively.
+ 
+Now deploy in kubernetes from jenkins
+pipeline {
+    agent any
+    
+    environment {
+        DOCKER_HUB_REPO = "shivammitra/flask-hello-world"
+        CONTAINER_NAME = "flask-hello-world"
+        DOCKERHUB_CREDENTIALS=credentials('dockerhub-credentials')
+    }
+    
+    stages {
+        /* We do not need a stage for checkout here since it is done by default when using "Pipeline script from SCM" option. */
+        
+        stage('Build') {
+            steps {
+                echo 'Building..'
+                sh 'docker image build -t $DOCKER_HUB_REPO:latest .'
+            }
+        }
+        stage('Test') {
+            steps {
+                echo 'Testing..'
+                sh 'docker stop $CONTAINER_NAME || true'
+                sh 'docker rm $CONTAINER_NAME || true'
+                sh 'docker run --name $CONTAINER_NAME $DOCKER_HUB_REPO /bin/bash -c "pytest test.py && flake8"'
+            }
+        }
+        stage('Push') {
+            steps {
+                echo 'Pushing image..'
+                sh 'echo $DOCKERHUB_CREDENTIALS_PSW | docker login -u $DOCKERHUB_CREDENTIALS_USR --password-stdin'
+                sh 'docker push $DOCKER_HUB_REPO:latest'
+            }
+        }
+        stage('Deploy') {
+            steps {
+                echo 'Deploying....'
+		sh 'scp -r -o StrictHostKeyChecking=no deployment.yml service.yml <username>@<ip_address>:~/'
+                sh 'ssh <username>@<ip_address> minikube kubectl -- apply -f ~/deployment.yaml'
+                sh 'ssh <username>@<ip_address> minikube kubectl -- apply -f ~/service.yaml'
+            }
+        }
+    }
+}
+
+
+
+
