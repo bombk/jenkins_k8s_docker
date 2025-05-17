@@ -199,6 +199,7 @@ pipeline {
 In case you have set up kebernetes on a different virtual machine,we will need to ssh to this from jenkins machine,
 Copy the deployemnt and service files and then run kubernetes commands.
 
+
 #Create a ssh key pair on jenkins servers
 $cd ~/.ssh # we are on jenkins server
 $ssh-keygen -t rsa # select the default options
@@ -208,6 +209,14 @@ $cat id_rsa.pub # copy the public key
 
 $cd ~/.ssh # we are on kubernetes server
 $ echo "<public key>" >> authorized_keys
+
+##ssh_copy_id auto login using 
+1. ssh_keygen = generate sshkey
+2. ssh_copy_id username@serverip
+ It will cpy your public key ~/.ssh/id_rsa_publick by default 
+remote server authorized key ~/.ssh/authorized_keys.
+
+
 
 Now modify 'Deploy' stage in Jenkinsfile. Replace and with the username and ip address of kubernets host respectively.
  
